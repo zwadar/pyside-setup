@@ -1,3 +1,44 @@
+#############################################################################
+##
+## Copyright (C) 2016 The Qt Company Ltd.
+## Contact: https://www.qt.io/licensing/
+##
+## This file is part of PySide2.
+##
+## $QT_BEGIN_LICENSE:LGPL$
+## Commercial License Usage
+## Licensees holding valid commercial Qt licenses may use this file in
+## accordance with the commercial license agreement provided with the
+## Software or, alternatively, in accordance with the terms contained in
+## a written agreement between you and The Qt Company. For licensing terms
+## and conditions see https://www.qt.io/terms-conditions. For further
+## information use the contact form at https://www.qt.io/contact-us.
+##
+## GNU Lesser General Public License Usage
+## Alternatively, this file may be used under the terms of the GNU Lesser
+## General Public License version 3 as published by the Free Software
+## Foundation and appearing in the file LICENSE.LGPL3 included in the
+## packaging of this file. Please review the following information to
+## ensure the GNU Lesser General Public License version 3 requirements
+## will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
+##
+## GNU General Public License Usage
+## Alternatively, this file may be used under the terms of the GNU
+## General Public License version 2.0 or (at your option) the GNU General
+## Public license version 3 or any later version approved by the KDE Free
+## Qt Foundation. The licenses are as published by the Free Software
+## Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
+## included in the packaging of this file. Please review the following
+## information to ensure the GNU General Public License requirements will
+## be met: https://www.gnu.org/licenses/gpl-2.0.html and
+## https://www.gnu.org/licenses/gpl-3.0.html.
+##
+## $QT_END_LICENSE$
+##
+#############################################################################
+
+from __future__ import print_function
+
 """This is a distutils setup-script for the PySide2 project
 
 To build the PySide2, simply execute:
@@ -26,7 +67,7 @@ For development purposes the following options might be of use, when using "setu
     --ignore-git will skip the fetching and checkout steps for supermodule and all submodules.
 
 REQUIREMENTS:
-- Python: 2.6, 2.7, 3.2, 3.3 and 3.4 is supported
+- Python: 2.6, 2.7, 3.3, 3.4 and 3.5 is supported
 - Cmake: Specify the path to cmake with --cmake option or add cmake to the system path.
 - Qt: 4.6, 4.7 and 4.8 is supported. Specify the path to qmake with --qmake option or add qmake to the system path.
 
@@ -156,6 +197,8 @@ def check_allowed_python_version():
 
 check_allowed_python_version()
 
+qtSrcDir = ''
+
 # Declare options
 OPTION_DEBUG = has_option("debug")
 OPTION_RELWITHDEBINFO = has_option('relwithdebinfo')
@@ -190,6 +233,12 @@ if OPTION_QMAKE is None:
 if OPTION_QMAKE is None:
     OPTION_QMAKE = find_executable("qmake")
 
+# make qtinfo.py independent of relative paths.
+if OPTION_QMAKE is not None and os.path.exists(OPTION_QMAKE):
+    OPTION_QMAKE = os.path.abspath(OPTION_QMAKE)
+if OPTION_CMAKE is not None and os.path.exists(OPTION_CMAKE):
+    OPTION_CMAKE = os.path.abspath(OPTION_CMAKE)
+
 QMAKE_COMMAND = None
 if OPTION_QMAKE is not None and os.path.exists(OPTION_QMAKE): # Checking whether qmake executable exists
     if os.path.islink(OPTION_QMAKE) and os.path.lexists(OPTION_QMAKE): # Looking whether qmake path is a link and whether the link exists
@@ -204,7 +253,6 @@ if len(QMAKE_COMMAND) == 0 or QMAKE_COMMAND[0] is None:
 if not os.path.exists(QMAKE_COMMAND[0]):
     print("'%s' does not exist." % QMAKE_COMMAND[0])
     sys.exit(1)
-
 if OPTION_CMAKE is None:
     OPTION_CMAKE = find_executable("cmake")
 
@@ -280,6 +328,14 @@ if OPTION_NOEXAMPLES:
         if item[0].startswith('pyside2-examples'):
             del submodules[__version__][idx]
 
+# Return a prefix suitable for the _install/_build directory
+def prefix():
+    virtualEnvName = os.environ.get('VIRTUAL_ENV', None)
+    name = os.path.basename(virtualEnvName) if virtualEnvName is not None else 'pyside'
+    name += str(sys.version_info[0])
+    if OPTION_DEBUG:
+        name += 'd'
+    return name
 
 # Initialize, pull and checkout submodules
 def prepareSubModules():
@@ -343,6 +399,11 @@ def prepareBuild():
     for pkg in ["pyside_package/PySide2", "pyside_package/pyside2uic"]:
         pkg_dir = os.path.join(script_dir, pkg)
         os.makedirs(pkg_dir)
+    # locate Qt sources for the documentation
+    qmakeOutput = run_process_output([OPTION_QMAKE, '-query', 'QT_INSTALL_PREFIX/src'])
+    if qmakeOutput:
+        global qtSrcDir
+        qtSrcDir = qmakeOutput[0].rstrip()
 
 class pyside_install(_install):
     def _init(self, *args, **kwargs):
@@ -551,8 +612,8 @@ class pyside_build(_build):
 
         script_dir = os.getcwd()
         sources_dir = os.path.join(script_dir, "sources")
-        build_dir = os.path.join(script_dir, "pyside_build", "%s" % build_name)
-        install_dir = os.path.join(script_dir, "pyside_install", "%s" % build_name)
+        build_dir = os.path.join(script_dir, prefix() + '_build', "%s" % build_name)
+        install_dir = os.path.join(script_dir, prefix() + '_install', "%s" % build_name)
 
         # Try to ensure that tools built by this script (such as shiboken2)
         # are found before any that may already be installed on the system.
@@ -622,6 +683,18 @@ class pyside_build(_build):
             for ext in ['shiboken2', 'pyside2', 'pyside2-tools']:
                 self.build_extension(ext)
 
+            if OPTION_BUILDTESTS:
+                # we record the latest successful build and note the build
+                # directory for supporting the tests.
+                timestamp = time.strftime('%Y-%m-%d_%H%M%S')
+                build_history = os.path.join(script_dir, 'build_history')
+                unique_dir = os.path.join(build_history, timestamp)
+                os.makedirs(unique_dir)
+                fpath = os.path.join(unique_dir, 'build_dir.txt')
+                with open(fpath, 'w') as f:
+                    print(build_dir, file=f)
+                log.info("Created %s" % build_history)
+
         if not OPTION_SKIP_PACKAGING:
             # Build patchelf if needed
             self.build_patchelf()
@@ -687,7 +760,6 @@ class pyside_build(_build):
             "-G", self.make_generator,
             "-DQT_QMAKE_EXECUTABLE='%s'" % self.qtinfo.qmake_command,
             "-DBUILD_TESTS=%s" % self.build_tests,
-            "-DDISABLE_DOCSTRINGS=True",
             "-DQt5Help_DIR=%s" % self.qtinfo.docs_dir,
             "-DCMAKE_BUILD_TYPE=%s" % self.build_type,
             "-DCMAKE_INSTALL_PREFIX=%s" % self.install_dir,
@@ -696,13 +768,16 @@ class pyside_build(_build):
         cmake_cmd.append("-DPYTHON_EXECUTABLE=%s" % self.py_executable)
         cmake_cmd.append("-DPYTHON_INCLUDE_DIR=%s" % self.py_include_dir)
         cmake_cmd.append("-DPYTHON_LIBRARY=%s" % self.py_library)
+        # Add source location for generating documentation
+        if qtSrcDir:
+            cmake_cmd.append("-DQT_SRC_DIR=%s" % qtSrcDir)
         if self.build_type.lower() == 'debug':
             cmake_cmd.append("-DPYTHON_DEBUG_LIBRARY=%s" % self.py_library)
 
         if extension.lower() == "shiboken2":
             cmake_cmd.append("-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=yes")
             if sys.version_info[0] > 2:
-                cmake_cmd.append("-DUSE_PYTHON_VERSION=3.4")
+                cmake_cmd.append("-DUSE_PYTHON_VERSION=3.3")
 
         if sys.platform == 'darwin':
             # Shiboken supports specifying multiple include paths separated by a colon on *nix
@@ -1140,7 +1215,6 @@ setup(
         'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.2',
         'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
