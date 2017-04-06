@@ -67,9 +67,9 @@ For development purposes the following options might be of use, when using "setu
     --ignore-git will skip the fetching and checkout steps for supermodule and all submodules.
 
 REQUIREMENTS:
-- Python: 2.6, 2.7, 3.3, 3.4 and 3.5 is supported
+- Python: 2.6, 2.7, 3.3, 3.4, 3.5 and 3.6 are supported
 - Cmake: Specify the path to cmake with --cmake option or add cmake to the system path.
-- Qt: 4.6, 4.7 and 4.8 is supported. Specify the path to qmake with --qmake option or add qmake to the system path.
+- Qt: 5.5 and 5.6 are supported. Specify the path to qmake with --qmake option or add qmake to the system path.
 
 OPTIONAL:
 OpenSSL: You can specify the location of OpenSSL DLLs with option --opnessl=</path/to/openssl/bin>.
@@ -88,6 +88,13 @@ submodules = {
         ["pyside2-tools", "dev"],
         ["pyside2-examples", "dev"],
         ["wiki", "master", ".."],
+    ],
+    '5.6': [
+        ["shiboken2", "5.6"],
+        ["pyside2", "5.6"],
+        ["pyside2-tools", "5.6"],
+        ["pyside2-examples", "5.6"],
+        ["wiki", "master", ".."]
     ],
 }
 old_submodules = {
@@ -350,7 +357,8 @@ def prepareSubModules():
         module_version = m[1]
         module_dir = m[2] if len(m) > 2 else ''
         module_dir = os.path.join(submodules_dir, module_dir, module_name)
-        if not os.path.exists(module_dir):
+        # Check for non-empty directory (repository checked out)
+        if not os.listdir(module_dir):
             needInitSubModules = True
         modulesList.append([module_name, module_version, module_dir])
     if needInitSubModules:
@@ -369,11 +377,21 @@ def prepareSubModules():
         module_dir = m[2]
         os.chdir(module_dir)
         currentBranch = ''
+        branches = set()
         for line in run_process_output(['git', 'branch']):
             if line.startswith('* '):
                 currentBranch = line[2:len(line)]
-                break
+            else:
+                branches.add(line.strip())
         if currentBranch != module_version:
+            if not module_version in branches:
+                print("Creating tracking branch %s for submodule %s" % \
+                      (module_version, module_name))
+                git_create_branch_cmd = ["git", "branch", "--track", module_version,
+                                         "origin/" + module_version]
+                if run_process(git_create_branch_cmd) != 0:
+                    raise DistutilsSetupError("Failed to create a tracking branch %s for %s" % \
+                                              (module_version, module_name))
             print("Checking out submodule %s to branch %s (from %s)" % (module_name, module_version, currentBranch))
             git_checkout_cmd = ["git", "checkout", module_version]
             if run_process(git_checkout_cmd) != 0:
@@ -1218,6 +1236,7 @@ setup(
         'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
         'Topic :: Database',
         'Topic :: Software Development',
         'Topic :: Software Development :: Code Generators',
